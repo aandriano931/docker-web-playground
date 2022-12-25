@@ -1,0 +1,229 @@
+version: "3.8"
+
+services:
+
+  # Securing docker.sock access with a proxy
+  docker-proxy:
+    container_name: docker-proxy
+    environment:
+      CONTAINERS: 1
+    image: tecnativa/docker-socket-proxy
+    networks:
+      - backend
+    ports:
+      - 2375
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+
+  # Traefik front-end (reverse proxy)
+  traefik:
+    depends_on:
+      - docker-proxy
+    image: traefik:v2.9.6
+    container_name: traefik
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - frontend
+      - backend
+    ports:
+      - 80:80
+      - 443:443
+      - 8080:8080
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./traefik/traefik.yaml:/traefik.yaml:ro
+      - ./traefik/acme.json:/acme.json
+      - ./traefik/traefik_access.log:/data/traefik_access.log
+      - ./traefik/traefik.log:/data/traefik.log
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik.entrypoints=http"
+      - "traefik.http.routers.traefik.rule=Host(`$TRAEFIK_DOMAIN`)"
+      - "traefik.http.middlewares.traefik-auth.basicauth.users=$TRAEFIK_BASIC_AUTH"
+      - "traefik.http.middlewares.traefik-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.traefik.middlewares=traefik-https-redirect"
+      - "traefik.http.routers.traefik-secure.entrypoints=https"
+      - "traefik.http.routers.traefik-secure.rule=Host(`$TRAEFIK_DOMAIN`)"
+      - "traefik.http.routers.traefik-secure.middlewares=traefik-auth"
+      - "traefik.http.routers.traefik-secure.tls=true"
+      - "traefik.http.routers.traefik-secure.tls.certresolver=http"
+      - "traefik.http.routers.traefik-secure.service=api@internal"
+
+  # Prometheus (monitoring solution)
+  prometheus:
+    image: prom/prometheus:v2.41.0
+    container_name: prometheus
+    restart: unless-stopped
+    networks:
+      - backend
+    volumes:
+      - ./prometheus/:/etc/prometheus/
+      - /etc/localtime:/etc/localtime:ro
+      - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yaml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - target: 9090
+        protocol: tcp
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.entrypoints=http"
+      - "traefik.http.routers.prometheus.rule=Host(`$PROMETHEUS_DOMAIN`)"
+      - "traefik.http.middlewares.prometheus-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.prometheus.middlewares=prometheus-https-redirect"
+      - "traefik.http.routers.prometheus-secure.entrypoints=https"
+      - "traefik.http.routers.prometheus-secure.rule=Host(`$PROMETHEUS_DOMAIN`)"
+      - "traefik.http.routers.prometheus-secure.tls=true"
+      - "traefik.http.routers.prometheus-secure.tls.certresolver=http"
+      - "traefik.http.routers.prometheus-secure.service=prometheus"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+
+  # Grafana (metrics visualization)
+  grafana:
+    image: grafana/grafana:9.3.2
+    restart: unless-stopped
+    container_name: grafana
+    volumes:
+      - ./grafana:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - /etc/localtime:/etc/localtime:ro
+    env_file:
+      - grafana/grafana.env
+    depends_on:
+      - prometheus
+    networks:
+      - backend
+    ports:
+      - target: 3000
+        protocol: tcp
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.entrypoints=http"
+      - "traefik.http.routers.grafana.rule=Host(`$GRAFANA_DOMAIN`)"
+      - "traefik.http.middlewares.grafana-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.grafana.middlewares=grafana-https-redirect"
+      - "traefik.http.routers.grafana-secure.entrypoints=https"
+      - "traefik.http.routers.grafana-secure.rule=Host(`$GRAFANA_DOMAIN`)"
+      - "traefik.http.routers.grafana-secure.tls=true"
+      - "traefik.http.routers.grafana-secure.tls.certresolver=http"
+      - "traefik.http.routers.grafana-secure.service=grafana"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+
+  ## Matomo database (web analytics)
+  matomo-db:
+    image: mariadb:10.9.4
+    container_name: mariadb
+    networks:
+      - backend
+    command: --max-allowed-packet=64MB
+    restart: unless-stopped
+    volumes:
+      - ./matomo/db:/var/lib/mysql
+    env_file:
+      - ./matomo/db.env
+
+  ## Matomo dashboard (web analytics)
+  matomo:
+    depends_on:
+      - matomo-db
+    image: matomo:4.12.3
+    container_name: matomo
+    restart: unless-stopped
+    networks:
+      - backend
+    volumes:
+      - ./matomo/www-data:/var/www/html
+    environment:
+      - MATOMO_DATABASE_HOST=db
+    env_file:
+      - ./matomo/db.env
+    ports:
+      - target: 80
+        protocol: tcp
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.matomo.entrypoints=http"
+      - "traefik.http.routers.matomo.rule=Host(`$MATOMO_DOMAIN`)"
+      - "traefik.http.middlewares.matomo-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.matomo.middlewares=matomo-https-redirect"
+      - "traefik.http.routers.matomo-secure.entrypoints=https"
+      - "traefik.http.routers.matomo-secure.rule=Host(`$MATOMO_DOMAIN`)"
+      - "traefik.http.routers.matomo-secure.tls=true"
+      - "traefik.http.routers.matomo-secure.tls.certresolver=http"
+      - "traefik.http.routers.matomo-secure.service=matomo"
+      - "traefik.http.services.matomo.loadbalancer.server.port=80"
+
+  ## Remark42 (comment engine for static websites)
+  remark42:
+    image: umputun/remark42:v1.11.2
+    container_name: "remark42"
+    hostname: "remark42"
+    restart: unless-stopped
+    networks:
+      - backend
+    volumes:
+      - ./remark42/var:/srv/var
+    ports:
+      - target: 8080
+        protocol: tcp
+    env_file:
+      - ./remark42/remark42.env
+    environment:
+      - APP_UID=1000  
+      - TIME_ZONE=Europe/Paris
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.remark42.entrypoints=http"
+      - "traefik.http.routers.remark42.rule=Host(`$REMARK42_DOMAIN`)"
+      - "traefik.http.middlewares.remark42-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.remark42.middlewares=remark42-https-redirect"
+      - "traefik.http.routers.remark42-secure.entrypoints=https"
+      - "traefik.http.routers.remark42-secure.rule=Host(`$REMARK42_DOMAIN`)"
+      - "traefik.http.routers.remark42-secure.tls=true"
+      - "traefik.http.routers.remark42-secure.tls.certresolver=http"
+      - "traefik.http.routers.remark42-secure.service=remark42"
+      - "traefik.http.services.remark42.loadbalancer.server.port=8080"
+      - "traefik.http.middlewares.remark42.headers.accesscontrolallowmethods=GET,OPTIONS,PUT"
+      - "traefik.http.middlewares.remark42.headers.accesscontrolalloworiginlist=*"
+      - "traefik.http.middlewares.remark42.headers.accesscontrolmaxage=100"
+      - "traefik.http.middlewares.remark42.headers.addvaryheader=true"
+
+  # Static website
+  website:
+    depends_on:
+      - traefik
+    image: httpd:2.4-alpine
+    container_name: "website"
+    hostname: "website"
+    restart: unless-stopped
+    networks:
+      - backend
+    volumes:
+      - ./website/_site:/usr/local/apache2/htdocs/
+    ports:
+      - target: 80
+        protocol: tcp
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.website.entrypoints=http"
+      - "traefik.http.routers.website.rule=Host(`$WEBSITE_DOMAIN`)"
+      - "traefik.http.middlewares.website-https-redirect.redirectscheme.scheme=https"
+      - "traefik.http.routers.website.middlewares=website-https-redirect"
+      - "traefik.http.routers.website-secure.entrypoints=https"
+      - "traefik.http.routers.website-secure.rule=Host(`$WEBSITE_DOMAIN`)"
+      - "traefik.http.routers.website-secure.tls=true"
+      - "traefik.http.routers.website-secure.tls.certresolver=http"
+      - "traefik.http.routers.website-secure.service=website"
+      - "traefik.http.services.website.loadbalancer.server.port=80"
+
+networks:
+  frontend:
+    external: true
+  backend:
+    external: true
+                                  

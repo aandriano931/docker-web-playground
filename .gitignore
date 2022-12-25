@@ -1,0 +1,12 @@
+backup.log
+grafana/alerting
+grafana/csv
+grafana/file-collections
+grafana/plugins
+grafana/png
+grafana/grafana.db
+matomo/db
+matomo/www-data
+remark42/var
+traefik/traefik_access.log
+traefik/traefik.log

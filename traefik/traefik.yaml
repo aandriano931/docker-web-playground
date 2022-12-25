@@ -1,0 +1,42 @@
+api:
+  dashboard: true
+  debug: false
+
+metrics:
+  prometheus:
+    addRoutersLabels: true
+    addEntryPointsLabels: true
+    addServicesLabels: true
+    entryPoint: metrics
+
+entryPoints:
+  http:
+    address: ":80"
+  https:
+    address: ":443"
+  metrics:
+    address: ":8080"
+
+providers:
+  docker:
+    endpoint: "tcp://docker-proxy:2375"
+    watch: true
+    exposedbydefault: false
+    network: backend
+
+log:
+  filePath: "/data/traefik.log"
+  format: json
+  level: WARN
+
+accessLog:
+  filePath: "/data/traefik_access.log"
+  format: json
+
+certificatesResolvers:
+  http:
+    acme:
+      email: aandriano@myemail.fr
+      storage: acme.json
+      httpChallenge:
+        entryPoint: http
