@@ -16,8 +16,6 @@ The dockerized ecosystem is composed of :
 
 <br>
 
-It is self-deployable through an automatized process using [Ansible](https://www.ansible.com/) and [Docker Compose](https://docs.docker.com/compose/).
-
 
 <p>I won't go into details on the reasons that made me choose one tool over another but I guess I could explain it with a few words. It's a mix between Open-Source, user personal data privacy, self-hosted solutions and ease of implementation and documentation.</p>
 
